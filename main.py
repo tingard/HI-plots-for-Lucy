@@ -35,19 +35,22 @@ df = pd.DataFrame.from_dict({
 matplotlib.rcParams.update({'font.size': 12})
 
 
+def convert_to_solar_mass_per_pc(v):
+    # converts from JyHz/beam to solar mass/pc^2 (for the colour bar
+    return (v * 1.6737236 * 10**(-24) * 9.5214087 * 10**(36)) / (1.989 * 10**(33))
+    return (v * 1.6737236 * 1E-24     * 9.5214087 * 1E36    ) / (1.989 * 1E33    )
+
+
 def get_galaxy(i):
     # Create a WCS object
     w = WCS(df['file name'][i], naxis=2)
     # grab the image data
     hIFits = fits.open(df['file name'][i])
     data = hIFits[0].data
+    print(np.min(data), np.max(data))
+
     # find the bar centre in pixels
     center = w.all_world2pix([[df['ra'][i], df['dec'][i]]], 0)[0]
-    translation_matrix = np.array([
-        [1, 0, 10],
-        [0, 1, 20],
-        [0, 0, 1]
-    ])
 
     # Find the offset of the center point of the galaxy from that of the image
     offset = center - np.array(data.shape) / 2
@@ -100,87 +103,93 @@ def get_galaxy(i):
     }
 
 
-fig, ax = plt.subplots(figsize=(18, 5*len(df)), ncols=3, nrows=len(df), dpi=100)
-for i in range(len(ax)):
-    image_axis = ax[i][0]
-    cross_section_axis = ax[i][1]
-    cross_section_perp_axis = ax[i][2]
+for zoom in [False, True]:
+    crop_size = 30 if zoom else 100
+    fig, ax = plt.subplots(figsize=(18, 5*len(df)), ncols=3, nrows=len(df), dpi=100)
+    for i in range(len(ax)):
+        image_axis = ax[i][0]
+        cross_section_axis = ax[i][1]
+        cross_section_perp_axis = ax[i][2]
 
-    # calculate required data for this galaxy
-    g = get_galaxy(i)
-    im = image_axis.imshow(
-        g['data'], origin='lower',
-        cmap='inferno', extent=g['extent']
+        # calculate required data for this galaxy
+        g = get_galaxy(i)
+        im = image_axis.imshow(
+            g['data'], origin='lower',
+            cmap='inferno', extent=g['extent']
+        )
+        bar_axis = shapely_rotate(
+            box(
+                g['center'][0] - 10000, g['center'][1] - 1*g['pixel size'],
+                g['center'][0] + 10000, g['center'][1] + 1*g['pixel size'],
+            ),
+            g['rotation'],
+        )
+        bar = shapely_rotate(
+            box(
+                g['center'][0]-g['bar length'] / 2, g['center'][1]-1*g['pixel size'],
+                g['center'][0]+g['bar length'] / 2, g['center'][1]+1*g['pixel size'],
+            ),
+            g['rotation'],
+        )
+        image_axis.add_patch(PolygonPatch(bar_axis, fc='C0', alpha=0.5))
+        image_axis.add_patch(PolygonPatch(bar, fc='w', alpha=0.7))
+        image_axis.add_patch(Ellipse(
+            xy=(-60, -60),
+            width=g['beam major'],
+            height=g['beam minor'],
+            angle=90 + g['beam pa'],
+            edgecolor='w',
+            facecolor='none',
+        ))
+        # crop to a useful size
+        image_axis.set_xlim(-crop_size, crop_size)
+        image_axis.set_ylim(-crop_size, crop_size)
+        image_axis.set_xlabel('Arcseconds from centre')
+        image_axis.set_ylabel('Arcseconds from centre')
+        # add a colorbar
+        c = plt.colorbar(im, ax=image_axis, fraction=0.046, pad=0.04)
+        c.set_label('Intensity [JY.Hz]')
+
+        # plot the cross section
+        cross_section_axis.plot(
+            np.linspace(g['extent'][0], g['extent'][1], g['data'].shape[0]),
+            g['cross_section'],
+        )
+        cross_section_axis.add_line(Line2D(
+            [g['center'][1]] * 2, [0, 100000],
+            linestyle='--',
+            c='k',
+        ))
+
+        # add a line denoting bar size
+        barPosition = np.array([g['bar length']]*2) * [-0.5, 0.5] + g['center'][1]
+        bar = Rectangle(
+            [barPosition[0], 0],
+            g['bar length'],
+            10000,
+            facecolor='k',
+            alpha=0.1,
+        )
+        cross_section_axis.add_artist(bar)
+
+        cross_section_axis.set_xlim(-crop_size, crop_size)
+        cross_section_axis.set_ylim(bottom=0)
+        cross_section_axis.set_xlabel('Arcseconds from centre')
+        cross_section_perp_axis.set_ylabel('Intensity [JY.Hz]')
+
+        # plot the perpendicular cross section
+        cross_section_perp_axis.plot(
+            np.linspace(g['extent'][0], g['extent'][1], g['data'].shape[0]),
+            g['cross_section_perp'],
+        )
+        cross_section_perp_axis.set_xlim(-crop_size, crop_size)
+        cross_section_perp_axis.set_ylim(bottom=0)
+        cross_section_perp_axis.set_xlabel('Arcseconds from centre')
+        cross_section_perp_axis.set_ylabel('Intensity [JY.Hz]')
+
+
+    plt.tight_layout()
+    plt.savefig(
+        'output_images/cross-sections_bar{}'.format('_zoomed' if zoom else ''),
+        bbox_inches='tight'
     )
-    bar_axis = shapely_rotate(
-        box(
-            g['center'][0] - 10000, g['center'][1] - 1.5*g['pixel size'],
-            g['center'][0] + 10000, g['center'][1] + 1.5*g['pixel size'],
-        ),
-        g['rotation'],
-    )
-    bar = shapely_rotate(
-        box(
-            g['center'][0]-g['bar length'], g['center'][1]-1.5*g['pixel size'],
-            g['center'][0]+g['bar length'], g['center'][1]+1.5*g['pixel size'],
-        ),
-        g['rotation'],
-    )
-    image_axis.add_patch(PolygonPatch(bar_axis, fc='C0', alpha=0.5))
-    image_axis.add_patch(PolygonPatch(bar, fc='w', alpha=0.7))
-    image_axis.add_patch(Ellipse(
-        xy=(-60, -60),
-        width=g['beam major'],
-        height=g['beam minor'],
-        angle=90 + g['beam pa'],
-        edgecolor='w',
-        facecolor='none',
-    ))
-    # crop to a useful size
-    image_axis.set_xlim(-70, 70)
-    image_axis.set_ylim(-70, 70)
-    image_axis.set_xlabel('Arcseconds from centre')
-    image_axis.set_ylabel('Arcseconds from centre')
-    # add a colorbar
-    # divider = make_axes_locatable(image_axis)
-    # cax = divider.append_axes("right", size="5%", pad=0.1)
-    plt.colorbar(im, ax=image_axis, fraction=0.046, pad=0.04)
-
-    # plot the cross section
-    cross_section_axis.plot(
-        np.linspace(g['extent'][0], g['extent'][1], g['data'].shape[0]),
-        g['cross_section'],
-    )
-    cross_section_axis.add_line(Line2D(
-        [g['center'][1]] * 2, [0, 100000],
-        linestyle='--',
-        c='k',
-    ))
-
-    # add a line denoting bar size
-    barPosition = np.array([g['bar length']]*2) * [-0.5, 0.5] + g['center'][1]
-    bar = Rectangle(
-        [barPosition[0], 0],
-        g['bar length'],
-        10000,
-        facecolor='k',
-        alpha=0.1,
-    )
-    cross_section_axis.add_artist(bar)
-
-    cross_section_axis.set_xlim(-70, 70)
-    cross_section_axis.set_xlabel('Arcseconds from centre')
-    cross_section_perp_axis.set_ylabel('Intensity [JY.Hz]')
-
-    # plot the perpendicular cross section
-    cross_section_perp_axis.plot(
-        np.linspace(g['extent'][0], g['extent'][1], g['data'].shape[0]),
-        g['cross_section_perp'],
-    )
-    cross_section_perp_axis.set_xlim(-70, 70)
-    cross_section_perp_axis.set_xlabel('Arcseconds from centre')
-    cross_section_perp_axis.set_ylabel('Intensity [JY.Hz]')
-
-
-plt.tight_layout()
-plt.savefig('output_images/cross-sections_bar', bbox_inches='tight')
